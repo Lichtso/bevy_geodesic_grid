@@ -1,0 +1,23 @@
+[package]
+name = "bevy_geodesic_grid"
+version = "0.17.0"
+edition = "2024"
+categories = ["graphics", "rendering"]
+description = "Geodesic grid on a sphere"
+keywords = ["graphics", "bevy"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/lichtso/bevy_geodesic_grid"
+documentation = "https://docs.rs/bevy_geodesic_grid"
+rust-version = "1.88.0"
+
+[profile.release]
+# lto = true
+# opt-level = 'z'
+# codegen-units = 1
+
+[dependencies]
+bevy_ellipsoid_billboard = { path = "../bevy_ellipsoid_billboard" }
+bevy = { version = "0.17.0", default-features = false, features = ["bevy_pbr", "bevy_picking"] }
+
+[dev-dependencies]
+bevy = { version = "0.17.0", default-features = false, features = ["tonemapping_luts", "bevy_animation", "bevy_winit", "bevy_text", "file_watcher", "zstd_rust", "multi_threaded"] }
