@@ -25,10 +25,10 @@ const ICOSAHEDRON_POLE_INDICES: [[[u8; 3]; 5]; 4] = [
     [[10, 6, 11], [6, 7, 11], [7, 8, 11], [8, 9, 11], [9, 10, 11]],
 ];
 
-fn side_of_half_plane(local_position: Vec3, pole_index_a: u8, pole_index_b: u8) -> bool {
+fn side_of_half_plane(point: Vec3, pole_index_a: u8, pole_index_b: u8) -> bool {
     let aux_a = ICOSAHEDRON_VERTICES[pole_index_a as usize]
         .cross(ICOSAHEDRON_VERTICES[pole_index_b as usize]);
-    return local_position.dot(aux_a) > 0.0;
+    return point.dot(aux_a) > 0.0;
 }
 
 /// Intermediate barycentric coordinate system to convert between cartesian coordinates and Tiles of a GeodesicGrid
@@ -77,10 +77,10 @@ impl IcosahedronCoordinates {
     }
 
     /// Converts from cartesian coordinates to icosahedron coordinates
-    pub fn from_cartesian(local_position: Vec3) -> Self {
-        let latitude = 0.5 + 0.5 * local_position.x.atan2(local_position.z) / PI;
-        /* let longitude = 1.0 - acos(local_position.y) / PI; */
-        let is_nothern_hemisphere = local_position.y > 0.0;
+    pub fn from_cartesian(cartesian: Vec3) -> Self {
+        let latitude = 0.5 + 0.5 * cartesian.x.atan2(cartesian.z) / PI;
+        /* let longitude = 1.0 - acos(cartesian.y) / PI; */
+        let is_nothern_hemisphere = cartesian.y > 0.0;
         let latitude_sector = (latitude * 10.0) as u8;
         let mut triangle_latitude = (latitude_sector + is_nothern_hemisphere as u8) / 2 % 5;
         let mut triangle_longitude = 0;
@@ -95,7 +95,7 @@ impl IcosahedronCoordinates {
         }
         /* var triangle_longitude: i32 = select(0, 3, is_nothern_hemisphere);
         pole_indices = ICOSAHEDRON_POLE_INDICES[triangle_longitude][triangle_latitude]; */
-        if side_of_half_plane(local_position, pole_indices[1], pole_indices[0]) {
+        if side_of_half_plane(cartesian, pole_indices[1], pole_indices[0]) {
             triangle_latitude = latitude_sector / 2;
             triangle_longitude = 1;
             pole_indices[0] = 1 + triangle_latitude;
@@ -107,7 +107,7 @@ impl IcosahedronCoordinates {
             } else {
                 [pole_indices[2], pole_indices[1]]
             };
-            if side_of_half_plane(local_position, border_indices[0], border_indices[1]) {
+            if side_of_half_plane(cartesian, border_indices[0], border_indices[1]) {
                 triangle_latitude = (latitude_sector + 1) / 2 % 5;
                 triangle_longitude = 2;
                 pole_indices[0] = 6 + triangle_latitude;
@@ -120,8 +120,8 @@ impl IcosahedronCoordinates {
         for i in 0..3 {
             let b = ICOSAHEDRON_VERTICES[pole_indices[(i + 1) % 3] as usize];
             let c = ICOSAHEDRON_VERTICES[pole_indices[(i + 2) % 3] as usize];
-            let numerator = local_position.dot(b.cross(c));
-            let denominator = 1.0 + INVERSESQRT5 + local_position.dot(b) + local_position.dot(c);
+            let numerator = cartesian.dot(b.cross(c));
+            let denominator = 1.0 + INVERSESQRT5 + cartesian.dot(b) + cartesian.dot(c);
             barycentric[i] = numerator.atan2(denominator) * 10.0 / PI;
         }
         // barycentric /= vec3(1.0, 1.0, 1.0).dot(barycentric);

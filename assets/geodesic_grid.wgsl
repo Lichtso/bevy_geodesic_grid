@@ -6,7 +6,9 @@
 }
 #import ellipsoid_billboard
 
-@group(#{MATERIAL_BIND_GROUP}) @binding(0) var selection_texture: texture_2d<u32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(0) var tile_texture: texture_2d<u32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(1) var selection_texture: texture_2d<u32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(2) var palette_texture: texture_2d<f32>;
 
 @vertex
 fn vertex(vertex: ellipsoid_billboard::Vertex) -> ellipsoid_billboard::VertexOutput {
@@ -60,9 +62,9 @@ const ICOSAHEDRON_VERTICES = array<vec3<f32>, 12>(
     ),
 );*/
 
-fn side_of_half_plane(local_position: vec3<f32>, pole_index_a: i32, pole_index_b: i32) -> bool {
+fn side_of_half_plane(point: vec3<f32>, pole_index_a: i32, pole_index_b: i32) -> bool {
     let aux_a = cross(ICOSAHEDRON_VERTICES[pole_index_a], ICOSAHEDRON_VERTICES[pole_index_b]);
-    return dot(local_position, aux_a) > 0.0;
+    return dot(point, aux_a) > 0.0;
 }
 
 fn into_cartesian(barycentric: vec3<f32>, pole_indices: vec3<i32>) -> vec3<f32> {
@@ -83,11 +85,11 @@ fn into_cartesian(barycentric: vec3<f32>, pole_indices: vec3<i32>) -> vec3<f32> 
     return -p.yzw / p.x;
 }
 
-fn from_cartesian(local_position: vec3<f32>, triangle_latitude: ptr<function, i32>, triangle_longitude: ptr<function, i32>, pole_indices: ptr<function, vec3<i32>>) -> vec3<f32> {
+fn from_cartesian(cartesian: vec3<f32>, triangle_latitude: ptr<function, i32>, triangle_longitude: ptr<function, i32>, pole_indices: ptr<function, vec3<i32>>) -> vec3<f32> {
     // Polar coordinates
-    let latitude = 0.5 + 0.5 * atan2(local_position.x, local_position.z) / PI;
-    /* let longitude = 1.0 - acos(local_position.y) / PI; */
-    let is_nothern_hemisphere = local_position.y > 0.0;
+    let latitude = 0.5 + 0.5 * atan2(cartesian.x, cartesian.z) / PI;
+    /* let longitude = 1.0 - acos(cartesian.y) / PI; */
+    let is_nothern_hemisphere = cartesian.y > 0.0;
     let latitude_sector = i32(latitude * 10.0);
     // Icosahedron triangle
     *triangle_latitude = (latitude_sector + i32(is_nothern_hemisphere)) >> 1; // / 2;
@@ -102,7 +104,7 @@ fn from_cartesian(local_position: vec3<f32>, triangle_latitude: ptr<function, i3
     }
     /* *triangle_longitude = select(0, 3, is_nothern_hemisphere);
     *pole_indices = ICOSAHEDRON_POLE_INDICES[*triangle_longitude][*triangle_latitude]; */
-    if side_of_half_plane(local_position, (*pole_indices).y, (*pole_indices).x) {
+    if side_of_half_plane(cartesian, (*pole_indices).y, (*pole_indices).x) {
         *triangle_latitude = latitude_sector >> 1; // / 2;
         *triangle_longitude = 1;
         *pole_indices = vec3(1 + *triangle_latitude, *triangle_latitude + 1, 6 + *triangle_latitude);
@@ -110,7 +112,7 @@ fn from_cartesian(local_position: vec3<f32>, triangle_latitude: ptr<function, i3
         (*pole_indices).y += 1;
         /* pole_indices = ICOSAHEDRON_POLE_INDICES[*triangle_longitude][*triangle_latitude]; */
         let border_indices = select((*pole_indices).zy, (*pole_indices).xz, (latitude_sector & 1) == 0);
-        if side_of_half_plane(local_position, border_indices.x, border_indices.y) {
+        if side_of_half_plane(cartesian, border_indices.x, border_indices.y) {
             *triangle_latitude = (latitude_sector + 1) >> 1; // / 2;
             *triangle_latitude -= i32(*triangle_latitude >= 5) * 5; // *triangle_latitude %= 5;
             *triangle_longitude = 2;
@@ -125,8 +127,8 @@ fn from_cartesian(local_position: vec3<f32>, triangle_latitude: ptr<function, i3
     for(var i = 0; i < 3; i += 1) {
         let b = ICOSAHEDRON_VERTICES[(*pole_indices)[(i + 1) % 3]];
         let c = ICOSAHEDRON_VERTICES[(*pole_indices)[(i + 2) % 3]];
-        let numerator = dot(local_position, cross(b, c));
-        let denominator = 1.0 + INVERSESQRT5 + dot(local_position, b) + dot(local_position, c);
+        let numerator = dot(cartesian, cross(b, c));
+        let denominator = 1.0 + INVERSESQRT5 + dot(cartesian, b) + dot(cartesian, c);
         bary[i] = atan2(numerator, denominator) * 10.0 / PI;
     }
     // bary /= dot(vec3(1.0), bary);
@@ -180,11 +182,11 @@ fn tile_midpoint_offset(barycentric: ptr<function, vec3<f32>>, floored: vec3<i32
 
 @fragment
 fn fragment(vertex_output: ellipsoid_billboard::VertexOutput) -> ellipsoid_billboard::FragmentOutput {
-    var local_position: vec3<f32>;
+    var cartesian: vec3<f32>;
     var world_position: vec3<f32>;
     var world_normal: vec3<f32>;
     var fragment_output: ellipsoid_billboard::FragmentOutput;
-    fragment_output.frag_depth = ellipsoid_billboard::fragment_ray_tracing(vertex_output, &local_position, &world_position, &world_normal);
+    fragment_output.frag_depth = ellipsoid_billboard::fragment_ray_tracing(vertex_output, &cartesian, &world_position, &world_normal);
     /* fragment_output.color = vec4(world_normal, 1.0);
     return fragment_output;*/
 
@@ -192,27 +194,34 @@ fn fragment(vertex_output: ellipsoid_billboard::VertexOutput) -> ellipsoid_billb
     /* fragment_output.color = vec4(f32(triangle_latitude) / 4.0, f32(triangle_longitude) / 3.0, 0.0, 1.0); */
 
     // Barycentric coordinates
-    const gp_index = 10;
     var triangle_latitude: i32;
     var triangle_longitude: i32;
     var pole_indices: vec3<i32>;
-    var barycentric = from_cartesian(local_position, &triangle_latitude, &triangle_longitude, &pole_indices) * f32(gp_index);
+    var barycentric = from_cartesian(cartesian, &triangle_latitude, &triangle_longitude, &pole_indices);
+    const gp_index = 128;
+    const mip_level = 0u;
+    // gp_index /= (1 << mip_level);
+    barycentric *= f32(gp_index);
     let floored = vec3<i32>(barycentric);
     let barycentric_midpoint = tile_midpoint_offset(&barycentric, floored);
     let tile = into_tile(floored, triangle_latitude, triangle_longitude, gp_index);
     // let barycentric_midpoint = from_tile(tile, &triangle_latitude, &triangle_longitude, gp_index);
     // fragment_output.color = vec4(f32(tile.x) / f32(gp_index * 10), f32(tile.y) / f32(gp_index * 4), 0.0, 1.0);
     // fragment_output.color = vec4(barycentric_midpoint / f32(gp_index), 1.0);
-    fragment_output.color = vec4(barycentric / f32(gp_index), 1.0);
-    let neighboor = textureLoad(selection_texture, tile, 0).x;
+    // fragment_output.color = vec4(barycentric / f32(gp_index), 1.0);
+    let tile_kind = textureLoad(tile_texture, tile, mip_level).x;
+    let color = textureLoad(palette_texture, vec2(tile_kind, 0), 0).rgb;
+    let metallic_roughness_emission = textureLoad(palette_texture, vec2(tile_kind, 1), 0).rgb;
+    // fragment_output.color = vec4(0.0, f32(textureLoad(tile_texture, tile, 0).x) / 4.0, 0.0, 1.0);
+    /*let neighboor = textureLoad(selection_texture, tile, 0).x;
     if neighboor > 0 {
         fragment_output.color = vec4(0.0, 0.0, 0.0, 1.0);
         fragment_output.color[neighboor - 1] = 1.0;
-    }
+    }*/
 
     /*let is_flipped = ((floored.x + floored.y + floored.z) & 1) == 1;
     /*let cart = into_cartesian((barycentric_midpoint + vec3(-2.0, 1.0, 1.0) / select(3.0, -3.0, is_flipped)) / f32(gp_index), pole_indices);
-    fragment_output.color = vec4(vec3(step(length(cart - local_position), 0.01)), 1.0);*/
+    fragment_output.color = vec4(vec3(step(length(cart - cartesian), 0.01)), 1.0);*/
     let plane = normalize(vec3(1.0, -2.0, 3.0));
     var dots = vec3(0.0);
     for(var i = 0; i < 3; i += 1) {
@@ -226,11 +235,13 @@ fn fragment(vertex_output: ellipsoid_billboard::VertexOutput) -> ellipsoid_billb
     fragment_output.color = vec4(vec3(step(abs(sides - 1.5), 1.0)), 1.0);*/
 
     // Grid lines
-    let edge_distance = 1.0 - max(barycentric.x, max(barycentric.y, barycentric.z));
+    var edge_distance = vec3(2.0) - barycentric;
+    let selection = textureLoad(selection_texture, tile, 0).x;
+    edge_distance -= vec3<f32>(vec3<u32>((selection >> 1) & 1, (selection >> 2) & 1, (selection >> 3) & 1));
     let hit_angle = acos(-dot(world_normal, view.world_from_view[2].xyz)) / PI;
-    let grid_line_width = 0.05 + 0.25 * (1.0 - sqrt(hit_angle));
-    let grid_line_intensity = max(0.0, 1.0 - edge_distance / grid_line_width);
-    /* fragment_output.color = vec4(mix(fragment_output.color.rgb, vec3(0.0), grid_line_intensity), 1.0); */
+    let grid_line_width = 0.5 + 0.25 * (1.0 - sqrt(hit_angle));
+    let grid_line_intensity = max(0.0, 1.0 - min(edge_distance.x, min(edge_distance.y, edge_distance.z)) / grid_line_width) + f32(selection & 1) * 0.5;
+    fragment_output.color = vec4(mix(color, vec3(1.0, 0.0, 0.0), grid_line_intensity), 1.0);
     #endif
 
     // Illumination
@@ -240,8 +251,9 @@ fn fragment(vertex_output: ellipsoid_billboard::VertexOutput) -> ellipsoid_billb
     pbr_input.world_position = vec4(world_position, 1.0);
     pbr_input.world_normal = world_normal;
     #ifndef PREPASS_PIPELINE
-    pbr_input.material.metallic = 0.6;
-    pbr_input.material.perceptual_roughness = 0.7 - grid_line_intensity * 0.4;
+    pbr_input.material.metallic = metallic_roughness_emission.r;
+    pbr_input.material.perceptual_roughness = metallic_roughness_emission.g;
+    pbr_input.material.emissive = vec4(color, 0.0) * metallic_roughness_emission.b;
     #endif
     ellipsoid_billboard::fragment_illumination(&pbr_input, &fragment_output);
     return fragment_output;
